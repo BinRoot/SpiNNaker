@@ -1,5 +1,0 @@
-### BOOTING ###
-boot scamp.boot spin3.conf
-sleep 1
-app_load myapp.aplx 1 16
-ps
