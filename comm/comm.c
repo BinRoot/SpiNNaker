@@ -14,7 +14,28 @@
 #define SECh ((1 << SOUTH) | (1 << EAST))
 #define SWCh ((1 << SOUTH) | (1 << WEST))
 
+#define NORTH_ARRIVED      (1 << NORTH)
+#define SOUTH_ARRIVED      (1 << SOUTH)
+#define NONE_ARRIVED       0
+
+#define CORE_TO_NORTH(core)        (core + 1)
+#define CORE_TO_SOUTH(core)        (core - 1)
+
+#define CHIP_TO_NORTH(chip)     (chip + 1)
+#define CHIP_TO_SOUTH(chip)     (chip - 1)
+#define IS_NORTHERNMOST_CHIP(x, y) ((chip_map[x][y] & (1 << NORTH)) != 0)
+#define IS_SOUTHERNMOST_CHIP(x, y) ((chip_map[x][y] & (1 << SOUTH)) != 0)
+#define NORTHERNMOST_CORE(core)    (((core - 1) | 0x3) + 1)
+#define SOUTHERNMOST_CORE(core)    (((core - 1) & 0xc) + 1)
+
+
+
+#define DONT_ROUTE_KEY     0xffff
 #define ROUTING_KEY(chip, core)    ((chip << 5) | core)
+#define ROUTE_TO_CORE(core)        (1 << (core + 6))
+#define ROUTE_TO_LINK(link)        (1 << link)
+#define NORTH_LINK                 2
+#define SOUTH_LINK                 5
 
 // ---
 // variables
@@ -22,6 +43,7 @@
 uint coreID;
 uint chipID;
 uint my_chip, my_x, my_y;
+uint init_arrived;
 
 #define MAP_2x2_on_4       TRUE
 
@@ -42,21 +64,109 @@ uint my_chip, my_x, my_y;
   };
 #endif
 
+#define IS_NORTHERNMOST_CORE(core) (((core - 1) & 0x3) == 0x3)
+#define IS_SOUTHERNMOST_CORE(core) (((core - 1) & 0x3) == 0x0)
+#define IS_NORTHERNMOST_CHIP(x, y) ((chip_map[x][y] & (1 << NORTH)) != 0)
+#define IS_SOUTHERNMOST_CHIP(x, y) ((chip_map[x][y] & (1 << SOUTH)) != 0)
+
+
 uint my_key;
+uint north_key;
+uint south_key;
 sdp_msg_t my_msg;
+uint my_route = 0;  // where I send my data
+
+uint route_from_north = FALSE;
+uint route_from_south = FALSE;
+
 
 void routing_table_init () {
   my_key = ROUTING_KEY(chipID, coreID);
+  init_arrived = NONE_ARRIVED;
+
+  if (IS_NORTHERNMOST_CORE(coreID)) {
+    if (IS_NORTHERNMOST_CHIP(my_x, my_y)) {
+      // don't send packets north
+      // don't expect packets from north
+      north_key = DONT_ROUTE_KEY;
+      init_arrived |= NORTH_ARRIVED;
+    } else {
+      // send packets to chip to the north
+      my_route |= ROUTE_TO_LINK(NORTH_LINK);
+      // expect packets from chip to the north (southernmost core)
+      route_from_north = TRUE;
+      north_key = ROUTING_KEY(CHIP_TO_NORTH(chipID), SOUTHERNMOST_CORE(coreID));
+    }
+  } else {
+    // expect packets from north
+    north_key = ROUTING_KEY(chipID, CORE_TO_NORTH(coreID));
+    // send to north core
+    my_route |= ROUTE_TO_CORE(CORE_TO_NORTH(coreID));
+  }
+
+  if (IS_SOUTHERNMOST_CORE(coreID)) {
+    if (IS_SOUTHERNMOST_CHIP(my_x, my_y)) {
+      // don't send packets south
+      // don't expect packets from south
+      south_key = DONT_ROUTE_KEY;
+      init_arrived |= SOUTH_ARRIVED;
+    } else {
+      // send packets to chip to the south
+      my_route |= ROUTE_TO_LINK(SOUTH_LINK);
+      // expect packets from chip to the south (northernmost core)
+      route_from_south = TRUE;
+      south_key = ROUTING_KEY(CHIP_TO_SOUTH(chipID), NORTHERNMOST_CORE(coreID));
+    }
+  } else {
+    // expect packets from south
+    south_key = ROUTING_KEY(chipID, CORE_TO_SOUTH(coreID));
+    // send to south core
+    my_route |= ROUTE_TO_CORE(CORE_TO_SOUTH(coreID));
+  }
+
+
+  spin1_set_mc_table_entry((6 * coreID), // entry
+                     my_key,             // key
+                     0xffffffff,         // mask
+                     my_route            // route
+                    );
+
+  /* set MC routing table entries to get packets from neighbour chips */
+  /* north */
+  if (route_from_north)
+  {
+    spin1_set_mc_table_entry((6 * coreID) + 1,     // entry
+                             north_key,            // key
+                             0xffffffff,           // mask
+                             ROUTE_TO_CORE(coreID) // route
+                            );
+  }
+
+  /* south */
+  if (route_from_south)
+  {
+    spin1_set_mc_table_entry((6 * coreID) + 2,     // entry
+                             south_key,            // key
+                             0xffffffff,           // mask
+                             ROUTE_TO_CORE(coreID) // route
+                            );
+  }
+
+
 }
+
+uint data_to_send = 1;
 
 // Callback MC_PACKET_RECEIVED
 void receive_data (uint key, uint payload) {
   io_printf (IO_STD, "Received data (%u, %u)\n", key, payload);
+
+  data_to_send = payload + 1;
 }
 
 // Callback TIMER_TICK
 void update (uint a, uint b) {
-  int data_to_send = 7;
+  io_printf (IO_STD, "tick %d\n", data_to_send);
 
   // send data to neighbor(s)
   spin1_send_mc_packet(my_key, data_to_send, WITH_PAYLOAD);
@@ -110,7 +220,7 @@ void c_main (void) {
     return;
   }
 
-      // set the core map for the simulation
+  // set the core map for the simulation
   spin1_application_core_map(NUMBER_OF_XCHIPS, NUMBER_OF_YCHIPS, core_map);
 
   spin1_set_timer_tick (TIMER_TICK_PERIOD);
@@ -121,9 +231,11 @@ void c_main (void) {
   spin1_callback_on (SDP_PACKET_RX, host_data, 0);
 
   // Initialize routing tables
-  // routing_table_init ();
+  routing_table_init ();
 
   // Initialize SDP message buffer
   sdp_init ();
 
+  // go
+  spin1_start();
 }
