@@ -102,7 +102,7 @@ void routing_table_init () {
 }
 
 void receive_data (uint key, uint payload) {
-  io_printf (IO_STD, "got response! (%u, %u)\n", key, payload);
+  io_printf (IO_BUF, "got response! (%u, %u)\n", key, payload);
 }
 
 void send_first_value (uint a, uint b) {
@@ -124,7 +124,7 @@ void c_main (void) {
 			     NUMBER_OF_YCHIPS, 
 			     core_map);
 
-  io_printf (IO_STD, "%u\n", coreID, my_x, my_y);
+  io_printf (IO_BUF, "coreID: %u, x: %u, y: %u\n", coreID, my_x, my_y);
 
   // register callbacks
   spin1_callback_on (MC_PACKET_RECEIVED, receive_data, 0);
@@ -138,5 +138,5 @@ void c_main (void) {
   // go
   spin1_start();
 
-  io_printf (IO_STD, "done\n");
+  io_printf (IO_BUF, "done\n");
 }
