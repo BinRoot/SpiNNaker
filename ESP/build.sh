@@ -15,15 +15,16 @@ fi
 
 make APP=$1
 
-tubotron & disown
+#tubotron & disown
 
 BOOTFILE=boot.ybug
 echo "### BOOTING ###" > $BOOTFILE
 echo "boot scamp.boot spin3.conf" >> $BOOTFILE
-echo "sleep 1" >> $BOOTFILE
+echo "sleep 5" >> $BOOTFILE
 echo "iptag . 17894 1" >> $BOOTFILE
 echo "sleep 1" >> $BOOTFILE
 echo "app_fill $1.aplx all 1 16" >> $BOOTFILE
+echo "sleep 5" >> $BOOTFILE
 echo "ps" >> $BOOTFILE
 
 SPINNAKER="192.168.240.37"
